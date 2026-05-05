@@ -93,7 +93,9 @@
       "Bash(gh repo *)",
       "Bash(git remote *)",
       "Bash(git branch *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(bash ~/.claude/statusline-context.sh)",
+      "Bash(git checkout *)"
     ]
   }
 }

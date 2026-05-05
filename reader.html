@@ -107,13 +107,12 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,Blink
 .reader-toolbar-btn:active{background:rgba(128,128,128,0.15)}
 .reader-toolbar-btn svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.reader-toolbar-right{display:flex;gap:0;margin-left:auto}
 .reader-chapter-title{font-size:14px;font-weight:500;color:var(--reader-text,#2C2C2C);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;flex:1}
-.reader-bottom-center{display:flex;align-items:center;gap:12px;flex:1;justify-content:center}
-.token-usage{font-size:11px;color:var(--reader-text,#2C2C2C);opacity:0.6;background:rgba(128,128,128,0.1);padding:2px 8px;border-radius:10px}
-.battery-progress{display:flex;align-items:center;gap:6px}
-.battery-bar{position:relative;width:60px;height:14px;border:1.5px solid var(--reader-text,#2C2C2C);border-radius:3px;overflow:hidden}
-.battery-bar::after{content:'';position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:3px;height:8px;background:var(--reader-text,#2C2C2C);border-radius:0 2px 2px 0}
-.battery-fill{height:100%;background:var(--reader-text,#2C2C2C);transition:width 200ms ease;border-radius:1px}
-.battery-percent{font-size:12px;color:var(--reader-text,#2C2C2C);min-width:32px;text-align:right}
+.reader-bottom-center{display:flex;align-items:center;gap:8px;flex:1;justify-content:center}
+.reader-page-indicator{font-size:13px;color:var(--reader-text,#2C2C2C);opacity:0.7;min-width:80px;text-align:center}
+.progress-bar-wrap{position:relative;width:120px;height:20px;display:flex;align-items:center;cursor:pointer;touch-action:none}
+.progress-bar-track{position:absolute;left:0;right:0;height:2px;background:var(--reader-text,#2C2C2C);opacity:0.2;border-radius:1px}
+.progress-bar-fill{position:absolute;left:0;height:2px;background:var(--reader-text,#2C2C2C);border-radius:1px;transition:width 100ms linear}
+.progress-bar-knob{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--reader-text,#2C2C2C);top:50%;transform:translate(-50%,-50%);box-shadow:0 1px 4px rgba(0,0,0,0.15)}
 .reader-tap-zone{position:absolute;left:0;right:0;z-index:55;pointer-events:none}
 .reader-tap-zone.top{top:0;height:30%}
 .reader-tap-zone.center{top:30%;height:40%}
@@ -289,13 +288,12 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,Blink
     <div class="reader-toolbar-inner">
       <button class="reader-toolbar-btn" id="btn-prev-chapter" aria-label="上一章"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>
       <div class="reader-bottom-center">
-        <div class="battery-progress">
-          <div class="battery-bar">
-            <div class="battery-fill" id="battery-fill"></div>
-          </div>
-          <span class="battery-percent" id="battery-percent">0%</span>
+        <span class="reader-page-indicator" id="page-indicator">1 / 1</span>
+        <div class="progress-bar-wrap" id="progress-bar-wrap">
+          <div class="progress-bar-track"></div>
+          <div class="progress-bar-fill" id="progress-fill"></div>
+          <div class="progress-bar-knob" id="progress-knob"></div>
         </div>
-        <span class="token-usage" id="token-usage">Token: 0</span>
       </div>
       <div class="reader-toolbar-right">
       <button class="reader-toolbar-btn" id="btn-font-settings" aria-label="字体设置"><svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg></button>
@@ -458,9 +456,8 @@ const S=id=>document.querySelector(id);
 const shelfGrid=$('shelf-grid'),emptyState=$('empty-state'),readerView=$('reader-view');
 const readerScrollArea=$('reader-scroll-area'),readerContent=$('reader-content');
 const toolbarTop=$('reader-toolbar-top'),toolbarBottom=$('reader-toolbar-bottom');
-const chapterTitle=$('reader-chapter-title');
-const batteryFill=$('battery-fill'),batteryPercent=$('battery-percent'),tokenUsage=$('token-usage');
-const batteryBar=document.querySelector('.battery-bar');
+const chapterTitle=$('reader-chapter-title'),pageIndicator=$('page-indicator');
+const progressFill=$('progress-fill'),progressKnob=$('progress-knob'),progressWrap=$('progress-bar-wrap');
 const fontPanel=$('font-panel'),fontOverlay=$('font-overlay'),fontVal=$('font-size-val');
 const themeOpts=$('theme-options'),lhOpts=$('lh-options'),ffOpts=$('ff-options');
 const actionSheet=$('action-sheet'),actionOverlay=$('action-overlay');
@@ -778,33 +775,27 @@ function getCurrentChapterFromScroll(){
 function updateScrollProgress(){
   const area=readerScrollArea;
   const chapters=getChapters();
-  let pct=0;
   if(state.readingMode==='page'){
     if(chapters[state.currentChapter])chapterTitle.textContent=chapters[state.currentChapter].title;
+    pageIndicator.textContent='第'+(state.currentPage+1)+'页 / 共'+pageCount+'页';
     const totalCh=chapters.length||1;
     const chProgress=state.currentChapter/totalCh;
     const pageProgress=pageCount>1?(state.currentPage/(pageCount-1))/totalCh:0;
-    pct=Math.min(1,chProgress+pageProgress);
-  }else{
-    const maxScroll=area.scrollHeight-area.clientHeight;
-    pct=maxScroll>0?area.scrollTop/maxScroll:0;
-    state.scrollPercent=pct;
-    const chIdx=getCurrentChapterFromScroll();
-    state.currentChapter=chIdx;
-    if(chapters[chIdx])chapterTitle.textContent=chapters[chIdx].title;
+    const pct=Math.min(1,chProgress+pageProgress);
+    // Use percentage to avoid offsetWidth reflow
+    progressFill.style.width=(pct*100)+'%';
+    progressKnob.style.left=(pct*100)+'%';
+    return;
   }
-  // Update battery-style progress bar
-  const percent=Math.round(pct*100);
-  batteryFill.style.width=percent+'%';
-  batteryPercent.textContent=percent+'%';
-  // Update token usage (estimate: ~1.5 tokens per Chinese character)
-  const book=getBook();
-  if(book){
-    const totalChars=book.chapters.reduce((sum,ch)=>sum+ch.content.length,0);
-    const readChars=Math.round(totalChars*pct);
-    const tokens=Math.round(readChars*1.5);
-    tokenUsage.textContent='Token: '+tokens.toLocaleString();
-  }
+  const maxScroll=area.scrollHeight-area.clientHeight;
+  const pct=maxScroll>0?area.scrollTop/maxScroll:0;
+  state.scrollPercent=pct;
+  const chIdx=getCurrentChapterFromScroll();
+  state.currentChapter=chIdx;
+  if(chapters[chIdx])chapterTitle.textContent=chapters[chIdx].title;
+  pageIndicator.textContent=Math.round(pct*100)+'%';
+  progressFill.style.width=(pct*100)+'%';
+  progressKnob.style.left=(pct*100)+'%';
 }
 function scrollToChapter(idx){
   const chapters=getChapters();
@@ -1532,8 +1523,8 @@ $('btn-prev-chapter').addEventListener('click',()=>{if(state.currentChapter>0)sc
 $('btn-next-chapter').addEventListener('click',()=>{const c=getChapters();if(state.currentChapter<c.length-1)scrollToChapter(state.currentChapter+1);});
 
 // Progress drag
-batteryBar.addEventListener('mousedown',startDrag);
-batteryBar.addEventListener('touchstart',startDrag,{passive:true});
+progressWrap.addEventListener('mousedown',startDrag);
+progressWrap.addEventListener('touchstart',startDrag,{passive:true});
 function startDrag(e){if(e.type==='mousedown'&&progressTouchHandled)return;progressDragging=true;updateProgressFromEvent(e);}
 document.addEventListener('mousemove',e=>{if(!progressDragging)return;updateProgressFromEvent({clientX:e.clientX});});
 document.addEventListener('mouseup',()=>{if(progressDragging){progressDragging=false;saveBookProgress();}});
@@ -1541,7 +1532,7 @@ let progressTouchHandled=false;
 document.addEventListener('touchmove',e=>{if(!progressDragging)return;progressTouchHandled=true;updateProgressFromEvent({clientX:e.touches[0].clientX});},{passive:true});
 document.addEventListener('touchend',()=>{if(progressDragging){progressDragging=false;saveBookProgress();}progressTouchHandled=true;setTimeout(()=>progressTouchHandled=false,500);});
 function updateProgressFromEvent(e){
-  const r=batteryBar.getBoundingClientRect();
+  const r=progressWrap.getBoundingClientRect();
   const pct=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
   if(state.readingMode==='page'){
     const targetPage=Math.round(pct*(pageCount-1));
