@@ -1,0 +1,9 @@
+{
+  "appId": "com.novel.reader",
+  "appName": "小说阅读器",
+  "webDir": "www",
+  "backgroundColor": "#1C1C1E",
+  "android": {
+    "backgroundColor": "#1C1C1E"
+  }
+}

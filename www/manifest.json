@@ -1,0 +1,17 @@
+{
+  "name": "小说阅读器",
+  "short_name": "阅读器",
+  "description": "纯净本地小说阅读器",
+  "start_url": "/reader.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F5F0E8",
+  "theme_color": "#1C1C1E",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
