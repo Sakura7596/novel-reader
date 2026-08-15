@@ -1,4 +1,17 @@
 @echo off
+echo 正在同步最新源码到 www...
+where node >nul 2>&1
+if errorlevel 1 (
+    echo 未找到 Node.js，无法同步源码，请先安装 Node.js
+    pause
+    exit /b
+)
+node "%~dp0sync-www.js"
+if errorlevel 1 (
+    echo 源码同步失败，请检查错误信息
+    pause
+    exit /b
+)
 cd /d "%~dp0..\android"
 set JAVA_HOME=C:\Users\Sakura\java\jdk-21.0.11
 set ANDROID_HOME=C:\Android
