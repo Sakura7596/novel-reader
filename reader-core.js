@@ -187,6 +187,7 @@
     if(!['off','system','timer'].includes(state.settings.nightMode))state.settings.nightMode='off';
     if(!state.settings.autoScroll)state.settings.autoScroll='off';
     if(!['off','slow','normal','fast'].includes(state.settings.autoScroll))state.settings.autoScroll='off';
+    if(typeof state.settings.volumeKeyTurn!=='boolean')state.settings.volumeKeyTurn=false;
     if(!state.sortMode)state.sortMode='recent';
     if(!state.stats||typeof state.stats!=='object')state.stats={date:null,minutes:0,totalMinutes:0};
     return state;
@@ -201,7 +202,7 @@
     const title=options.title||'';
     const paragraphs=normalizeParagraphs(options.paragraphs||[]);
     const charsPerLine=Math.max(8,Math.floor(options.charsPerLine||22));
-    const linesPerPage=Math.max(4,Math.floor(options.linesPerPage||18));
+    const linesPerPage=Math.max(2,Math.floor(options.linesPerPage||18));
     const pages=[];
     let blocks=[];
     let lines=0;

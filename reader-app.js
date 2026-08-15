@@ -2,7 +2,9 @@
   'use strict';
 
   const DB_NAME='novelReaderDB';
-  const DB_VERSION=6;
+  const DB_VERSION=7;
+  const TRASH_PREFIX='novelReader_trash_';
+  const TRASH_RETENTION_MS=30*24*60*60*1000;
   const STATE_KEY='novelReaderState';
   const POSITION_PREFIX='novelReader_position_';
   const CHAPTER_PREFIX='novelReader_chapter_';
@@ -61,9 +63,12 @@
       this.markerCache=null;
       this.statTimer=null;
       this.deleteArmedUntil=0;
+      this.armedBookId=null;
+      this.trashEntries=[];
       this.autoScrollTimer=null;
       this.pinchStart=null;
       this.lastPinchTime=0;
+      this.navChain=Promise.resolve();
       this.systemDarkQuery=null;
       this.bindDom();
     }
@@ -96,6 +101,7 @@
       this.backupInput=this.$('backup-input');
       this.todayStats=this.$('today-stats');
       this.brightnessRange=this.$('brightness-range');
+      this.trashPanel=this.$('trash-panel');
       this.syncVisibilityState();
     }
 
@@ -112,6 +118,7 @@
       this.startStatTracking();
       this.installNightModeListener();
       this.startClock();
+      this.refreshTrash();
       if(this.storageFallback)this.showToast('IndexedDB 不可用，已启用受限本地存储');
     }
 
@@ -145,14 +152,26 @@
     }
 
     startStatTracking(){
+      this.lastStatTick=Date.now();
+      this.statAccumMs=0;
       clearInterval(this.statTimer);
       this.statTimer=setInterval(()=>{
-        if(!document.hidden&&this.reader&&this.reader.classList.contains('active'))this.tickReadingTime();
-      },60*1000);
-      this.tickReadingTime();
+        const now=Date.now();
+        const elapsed=now-this.lastStatTick;
+        this.lastStatTick=now;
+        if(!document.hidden&&this.reader&&this.reader.classList.contains('active')){
+          this.statAccumMs=(this.statAccumMs||0)+elapsed;
+          if(this.statAccumMs>=60000){
+            const minutes=Math.floor(this.statAccumMs/60000);
+            this.statAccumMs-=minutes*60000;
+            this.addReadingMinutes(minutes);
+          }
+        }
+      },30000);
+      this.renderTodayStats();
     }
 
-    tickReadingTime(){
+    addReadingMinutes(minutes){
       const stats=this.state.stats||{date:null,minutes:0,totalMinutes:0};
       const today=new Date();
       const todayKey=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
@@ -160,12 +179,10 @@
         stats.date=todayKey;
         stats.minutes=0;
       }
-      if(this.reader&&this.reader.classList.contains('active')&&!document.hidden){
-        stats.minutes+=1;
-        stats.totalMinutes=(stats.totalMinutes||0)+1;
-        this.saveState();
-        this.renderTodayStats();
-      }
+      stats.minutes=(stats.minutes||0)+minutes;
+      stats.totalMinutes=(stats.totalMinutes||0)+minutes;
+      this.saveState();
+      this.renderTodayStats();
     }
 
     renderTodayStats(){
@@ -184,7 +201,7 @@
         const req=indexedDB.open(DB_NAME,DB_VERSION);
         req.onupgradeneeded=e=>{
           const db=e.target.result;
-          ['state','chapters','positions'].forEach(name=>{if(!db.objectStoreNames.contains(name))db.createObjectStore(name);});
+          ['state','chapters','positions','trash'].forEach(name=>{if(!db.objectStoreNames.contains(name))db.createObjectStore(name);});
         };
         req.onsuccess=e=>{this.db=e.target.result;resolve(this.db);};
         req.onerror=e=>reject(e.target.error);
@@ -299,10 +316,25 @@
     }
 
     async detectFileEncoding(file){
+      const head=await file.slice(0,4).arrayBuffer();
+      const bytes=new Uint8Array(head);
+      if(bytes.length>=2){
+        if(bytes[0]===0xFF&&bytes[1]===0xFE)return 'utf-16le';
+        if(bytes[0]===0xFE&&bytes[1]===0xFF){
+          try{new TextDecoder('utf-16be');return 'utf-16be';}
+          catch(error){return 'utf-16le';}
+        }
+      }
       const sampleBuffer=await file.slice(0,Math.min(file.size,ENCODING_SAMPLE_BYTES)).arrayBuffer();
       const utf8Sample=new TextDecoder('utf-8',{fatal:false}).decode(sampleBuffer);
       const replacements=(utf8Sample.match(/\uFFFD/g)||[]).length;
       if(replacements>Math.max(2,Math.floor(utf8Sample.length*.01))){
+        let gbkLoss=Infinity;
+        let gb18030Loss=Infinity;
+        try{gbkLoss=(new TextDecoder('gbk',{fatal:false}).decode(sampleBuffer).match(/\uFFFD/g)||[]).length;}catch(error){}
+        try{gb18030Loss=(new TextDecoder('gb18030',{fatal:false}).decode(sampleBuffer).match(/\uFFFD/g)||[]).length;}catch(error){}
+        if(gb18030Loss<=gbkLoss&&isFinite(gb18030Loss))return 'gb18030';
+        if(isFinite(gbkLoss))return 'gbk';
         try{new TextDecoder('gbk');return 'gbk';}catch(error){}
       }
       return 'utf-8';
@@ -360,7 +392,6 @@
       if(this.state.books.length)return;
       try{
         if(localStorage.getItem('novelReader_seeded'))return;
-        localStorage.setItem('novelReader_seeded','1');
       }catch(error){}
       const chapters=ReaderCore.parseChaptersFromText('第一章 初读\n夜色安静，书页在指尖慢慢展开。\n\n这是一本示例书，用来确认阅读器可以正常工作。\n第二章 继续\n重新打开应用时，阅读器会回到你离开的地方。');
       const book=this.createBook('红楼梦示例','本地示例',chapters,'linear-gradient(145deg,#684832,#b47b48)');
@@ -369,6 +400,7 @@
         delete book.chapters;
         this.state.books.push(book);
         this.saveState();
+        try{localStorage.setItem('novelReader_seeded','1');}catch(error){}
       }catch(error){
         console.error('create demo book failed',error);
       }
@@ -449,8 +481,11 @@
       this.brightnessRange.addEventListener('input',()=>this.setBrightness(Number(this.brightnessRange.value)/100));
       document.querySelectorAll('[data-night]').forEach(btn=>btn.addEventListener('click',()=>this.setNightMode(btn.dataset.night)));
       document.querySelectorAll('[data-autoscroll]').forEach(btn=>btn.addEventListener('click',()=>this.setAutoScroll(btn.dataset.autoscroll)));
+      document.querySelectorAll('[data-volume]').forEach(btn=>btn.addEventListener('click',()=>this.setVolumeKeyTurn(btn.dataset.volume==='on')));
       this.tocFilter.addEventListener('input',()=>this.filterToc());
       this.$('delete-book-btn').addEventListener('click',()=>this.requestDeleteBook());
+      this.$('trash-btn').addEventListener('click',()=>this.openTrashPanel());
+      this.$('trash-close').addEventListener('click',()=>this.closeFeaturePanels());
     }
 
     isReaderChromeTarget(target){
@@ -657,10 +692,11 @@
       const startElement=range.startContainer.nodeType===Node.ELEMENT_NODE?range.startContainer:range.startContainer.parentElement;
       const paragraph=startElement&&startElement.closest('p[data-p]');
       const paragraphIndex=paragraph?Number(paragraph.dataset.p)||0:0;
+      const chapterIndex=paragraph&&paragraph.dataset.ch!==undefined?(Number(paragraph.dataset.ch)||0):this.currentChapter;
       const charOffset=(paragraph?Number(paragraph.dataset.start)||0:0)+Math.max(0,range.startOffset||0);
       const rect=range.getBoundingClientRect();
       if(!rect.width&&!rect.height){this.hideSelectionBubble();return;}
-      this.selectedText={text,bookId:this.currentBookId,chapterIdx:this.currentChapter,paragraphIndex,charOffset};
+      this.selectedText={text,bookId:this.currentBookId,chapterIdx:chapterIndex,paragraphIndex,charOffset};
       this.selectionBubble.classList.add('show');
       this.selectionBubble.setAttribute('aria-hidden','false');
       requestAnimationFrame(()=>{
@@ -819,6 +855,16 @@
     showBookActions(bookId){
       const book=this.state.books.find(item=>item.id===bookId);
       if(!book)return;
+      this.armedBookId=null;
+      this.deleteArmedUntil=0;
+      const btn=this.$('delete-book-btn');
+      if(btn){
+        btn.classList.remove('danger-armed');
+        const strong=btn.querySelector('strong');
+        if(strong)strong.textContent='删除这本书';
+        const meta=btn.querySelector('.action-meta');
+        if(meta)meta.textContent='移入最近删除，可恢复';
+      }
       this.selectedBookActionId=bookId;
       this.$('book-actions-title').textContent=book.title;
       const progress=Math.round((book.progress||0)*100);
@@ -934,7 +980,8 @@
       await this.openReader(result.bookId);
       this.currentChapter=result.chapterIdx;
       this.currentPage=0;
-      await this.renderReader({readingMode:'anchor',paragraphIndex:result.paragraphIndex,charOffset:result.charOffset});
+      const anchor={readingMode:'anchor',chapter:result.chapterIdx,paragraphIndex:result.paragraphIndex,charOffset:result.charOffset};
+      await this.renderReader(anchor);
       this.revealParagraph(result.paragraphIndex,result.charOffset,result.needle);
     }
 
@@ -1020,7 +1067,8 @@
       await this.openReader(bookmark.bookId);
       this.currentChapter=bookmark.chapterIdx;
       this.currentPage=0;
-      await this.renderReader({readingMode:'anchor',paragraphIndex:bookmark.paragraphIndex,charOffset:bookmark.charOffset});
+      const anchor={readingMode:'anchor',chapter:bookmark.chapterIdx,paragraphIndex:bookmark.paragraphIndex,charOffset:bookmark.charOffset};
+      await this.renderReader(anchor);
       this.revealParagraph(bookmark.paragraphIndex,bookmark.charOffset);
     }
 
@@ -1028,26 +1076,186 @@
       const book=this.state.books.find(item=>item.id===this.selectedBookActionId);
       if(!book)return;
       const btn=this.$('delete-book-btn');
-      if(Date.now()<this.deleteArmedUntil){
+      if(this.armedBookId===book.id&&Date.now()<this.deleteArmedUntil){
+        this.armedBookId=null;
         this.deleteArmedUntil=0;
-        this.deleteBook(this.selectedBookActionId);
+        this.deleteBook(book.id);
         return;
       }
+      this.armedBookId=book.id;
       this.deleteArmedUntil=Date.now()+3000;
       btn.classList.add('danger-armed');
       const strong=btn.querySelector('strong');
       if(strong)strong.textContent='确认删除《'+book.title+'》？';
       const meta=btn.querySelector('.action-meta');
-      if(meta)meta.textContent='3 秒内再次点击将永久删除';
+      if(meta)meta.textContent='再次点击将移入最近删除';
       clearTimeout(this.deleteArmTimer);
       this.deleteArmTimer=setTimeout(()=>{
+        this.armedBookId=null;
         this.deleteArmedUntil=0;
         btn.classList.remove('danger-armed');
         const strong2=btn.querySelector('strong');
         if(strong2)strong2.textContent='删除这本书';
         const meta2=btn.querySelector('.action-meta');
-        if(meta2)meta2.textContent='同时移除书签和阅读进度';
+        if(meta2)meta2.textContent='移入最近删除，可恢复';
       },3000);
+    }
+
+    async deleteBook(bookId){
+      const book=this.state.books.find(item=>item.id===bookId);
+      if(!book)return;
+      this.closeSheets();
+      this.showToast('正在移入最近删除…');
+      try{
+        const chapters=[];
+        for(let index=0;index<book.chapterCount;index++){
+          const chapter=await this.loadChapter(book,index);
+          chapters.push({title:chapter.title,content:chapter.content});
+          if(index%16===0)await new Promise(resolve=>requestAnimationFrame(resolve));
+        }
+        let position=null;
+        try{position=JSON.parse(localStorage.getItem(POSITION_PREFIX+book.id)||'null');}catch(error){}
+        if(this.db&&!position){try{position=await this.idb('positions','readonly',store=>store.get(book.id));}catch(error){}}
+        const bookmarks=this.state.bookmarks.filter(item=>item.bookId===book.id);
+        await this.saveTrashEntry(bookId,{savedAt:Date.now(),book,chapters,position,bookmarks});
+        await this.deleteStoredChapters(book.id,book.chapterCount);
+        if(this.db)await this.idb('positions','readwrite',store=>store.delete(book.id)).catch(()=>{});
+        localStorage.removeItem(POSITION_PREFIX+book.id);
+        this.state.books=this.state.books.filter(item=>item.id!==book.id);
+        this.state.bookmarks=this.state.bookmarks.filter(item=>item.bookId!==book.id);
+        this.selectedBookActionId=null;
+        this.armedBookId=null;
+        this.saveState();
+        this.renderLibrary();
+        this.showToastAction(`《${book.title}》已移入最近删除`,'撤销',()=>this.restoreFromTrash(bookId));
+      }catch(error){
+        console.error('move to trash failed',error);
+        this.armedBookId=null;
+        this.showToast('删除失败，请重试');
+      }
+    }
+
+    saveTrashEntry(bookId,entry){
+      if(this.db)return this.idb('trash','readwrite',store=>store.put(entry,bookId));
+      const serialized=JSON.stringify(entry);
+      if(serialized.length>2*1024*1024)return Promise.reject(new Error('trash entry too large for local storage fallback'));
+      localStorage.setItem(TRASH_PREFIX+bookId,serialized);
+      return Promise.resolve();
+    }
+
+    loadTrashEntry(bookId){
+      if(this.db)return this.idb('trash','readonly',store=>store.get(bookId)).catch(()=>null);
+      try{return Promise.resolve(JSON.parse(localStorage.getItem(TRASH_PREFIX+bookId)||'null'));}
+      catch(error){return Promise.resolve(null);}
+    }
+
+    async listTrashEntries(){
+      if(this.db){
+        try{
+          const values=await this.idb('trash','readonly',store=>store.getAll());
+          return (values||[]).filter(Boolean).map(entry=>({bookId:entry.book&&entry.book.id,savedAt:entry.savedAt||0,book:entry.book}));
+        }catch(error){return [];}
+      }
+      const entries=[];
+      for(let index=0;index<localStorage.length;index++){
+        const key=localStorage.key(index);
+        if(key&&key.startsWith(TRASH_PREFIX)){
+          try{
+            const entry=JSON.parse(localStorage.getItem(key)||'null');
+            if(entry&&entry.book)entries.push({bookId:key.slice(TRASH_PREFIX.length),savedAt:entry.savedAt||0,book:entry.book});
+          }catch(error){}
+        }
+      }
+      return entries;
+    }
+
+    deleteTrashEntry(bookId){
+      if(this.db)return this.idb('trash','readwrite',store=>store.delete(bookId)).catch(()=>{});
+      localStorage.removeItem(TRASH_PREFIX+bookId);
+      return Promise.resolve();
+    }
+
+    async purgeTrashEntry(bookId){
+      await this.deleteTrashEntry(bookId);
+      this.showToast('已永久删除');
+      await this.refreshTrash();
+    }
+
+    async restoreFromTrash(bookId){
+      const entry=await this.loadTrashEntry(bookId);
+      if(!entry||!entry.book)return false;
+      try{
+        const book=entry.book;
+        const chapters=(entry.chapters||[]).map(chapter=>({title:chapter.title,content:chapter.content}));
+        if(chapters.length){
+          await this.saveChapters(book.id,chapters);
+        }
+        if(entry.position){
+          try{localStorage.setItem(POSITION_PREFIX+book.id,JSON.stringify(entry.position));}catch(error){}
+          if(this.db)await this.idb('positions','readwrite',store=>store.put(entry.position,book.id)).catch(()=>{});
+          book.readingPosition=entry.position;
+          book.progress=entry.position.totalProgress||0;
+        }
+        if(Array.isArray(entry.bookmarks)&&entry.bookmarks.length){
+          const existing=new Set(this.state.bookmarks.map(item=>item.id));
+          entry.bookmarks.forEach(bookmark=>{if(!existing.has(bookmark.id))this.state.bookmarks.push(bookmark);});
+        }
+        if(!this.state.books.some(item=>item.id===book.id))this.state.books.push(book);
+        await this.deleteTrashEntry(bookId);
+        this.saveState();
+        this.renderLibrary();
+        this.showToast('已恢复《'+book.title+'》');
+        await this.refreshTrash();
+        return true;
+      }catch(error){
+        console.error('restore from trash failed',error);
+        this.showToast('恢复失败，请重试');
+        return false;
+      }
+    }
+
+    async refreshTrash(){
+      const entries=await this.listTrashEntries();
+      const now=Date.now();
+      const stale=entries.filter(entry=>now-entry.savedAt>TRASH_RETENTION_MS);
+      for(const entry of stale){await this.deleteTrashEntry(entry.bookId);}
+      const fresh=entries.filter(entry=>now-entry.savedAt<=TRASH_RETENTION_MS);
+      this.trashEntries=fresh;
+      const countEl=this.$('trash-count');
+      if(countEl)countEl.textContent=fresh.length?`${fresh.length} 本`:'空';
+    }
+
+    openTrashPanel(){
+      this.refreshTrash().then(()=>{
+        const entries=this.trashEntries;
+        const status=this.$('trash-status');
+        const list=this.$('trash-list');
+        status.textContent=entries.length?`${entries.length} 本书在最近删除中，保留 30 天`:'没有可恢复的书籍';
+        list.innerHTML=entries.map(entry=>{
+          const date=new Date(entry.savedAt);
+          const stamp=`${date.getMonth()+1}月${date.getDate()}日 ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
+          return `<article class="bookmark-card trash-row" data-trash-id="${this.escape(entry.bookId)}">
+            <div class="trash-cover" style="background:${entry.book.coverBg||'linear-gradient(145deg,#5f4636,#9d7047)'}"></div>
+            <div class="trash-copy">
+              <strong>${this.escape(entry.book.title)}</strong>
+              <small>${this.escape(entry.book.author||'未知作者')} · ${stamp} 删除</small>
+            </div>
+            <div class="trash-actions">
+              <button class="ghost-button" type="button" data-trash-action="restore" aria-label="恢复"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 1 2.3 5.7M4 12V7m0 5h5"/></svg></button>
+              <button class="ghost-button danger-text" type="button" data-trash-action="purge" aria-label="永久删除"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7h12M10 11v6M14 11v6M9 7l1-2h4l1 2M8 7l1 13h6l1-13"/></svg></button>
+            </div>
+          </article>`;
+        }).join('');
+        list.querySelectorAll('[data-trash-id]').forEach(card=>{
+          const id=card.dataset.trashId;
+          card.querySelector('[data-trash-action="restore"]').addEventListener('click',()=>this.restoreFromTrash(id));
+          card.querySelector('[data-trash-action="purge"]').addEventListener('click',()=>this.purgeTrashEntry(id));
+        });
+        this.libraryMenu.classList.remove('open');
+        this.trashPanel.classList.add('open');
+        this.scrim.classList.add('show');
+        this.syncVisibilityState();
+      });
     }
 
     openLibraryMenu(){
@@ -1141,28 +1349,6 @@
       }
     }
 
-    async deleteBook(bookId){
-      const book=this.state.books.find(item=>item.id===bookId);
-      if(!book)return;
-      try{
-        await this.deleteStoredChapters(book.id,book.chapterCount);
-        if(this.db){
-          await this.idb('positions','readwrite',store=>store.delete(book.id));
-        }
-        localStorage.removeItem(POSITION_PREFIX+book.id);
-        this.state.books=this.state.books.filter(item=>item.id!==book.id);
-        this.state.bookmarks=this.state.bookmarks.filter(item=>item.bookId!==book.id);
-        this.selectedBookActionId=null;
-        this.closeSheets();
-        this.saveState();
-        this.renderLibrary();
-        this.showToast('书籍已删除');
-      }catch(error){
-        console.error('delete book failed',error);
-        this.showToast('删除失败，请重试');
-      }
-    }
-
     async importFile(file){
       if(!file||!String(file.name||'').toLocaleLowerCase().endsWith('.txt')){this.showToast('请选择 TXT 文件');return;}
       if(file.size>MAX_IMPORT_BYTES){this.showToast('文件过大，请选择 100MB 以内的 TXT');return;}
@@ -1243,7 +1429,7 @@
       this.reader.classList.add('active');
       this.syncVisibilityState();
       this.setChromeVisible(true);
-      this.setAndroidVolumeKeys(true);
+      this.setAndroidVolumeKeys(!!this.state.settings.volumeKeyTurn);
       this.setAndroidImmersive(true);
       const saved=await this.loadBestPosition(book);
       this.currentChapter=saved?saved.chapter:0;
@@ -1277,12 +1463,12 @@
       this.updateProgress();
     }
 
-    async     renderScrollMode(savedPosition){
+    async renderScrollMode(savedPosition){
       this.reader.classList.remove('page-mode');
       this.readerContent.style.transform='';
       this.readerContent.style.width='';
       this.invalidateMarkerCache();
-      const target=savedPosition?savedPosition.chapter:this.currentChapter;
+      const target=savedPosition&&savedPosition.chapter!==undefined?savedPosition.chapter:this.currentChapter;
       await this.renderContinuousScrollContent(this.getCurrentBook(),target);
       await new Promise(resolve=>requestAnimationFrame(resolve));
       if(savedPosition)this.restorePosition(savedPosition);
@@ -1399,8 +1585,8 @@
           this.readerScroll.scrollTop=Math.max(0,this.readerScroll.scrollTop-removedHeight);
         }else this.scrollWindowEnd=chapter-1;
         removedCount++;
-        sections.shift();
-        if(removeFrom==='bottom')sections.pop();
+        if(removeFrom==='top')sections.shift();
+        else sections.pop();
       }
       this.invalidateMarkerCache();
     }
@@ -1412,14 +1598,37 @@
       const gutter=PAGE_GUTTERS[this.state.settings.marginIdx]||PAGE_GUTTERS[1];
       const readableWidth=Math.min(680,Math.max(1,pageWidth-gutter*2));
       const width=Math.max(16,Math.floor(readableWidth/(this.state.settings.fontSize||18)));
-      const lines=Math.max(8,Math.floor((this.readerScroll.clientHeight-verticalReserve)/((this.state.settings.fontSize||18)*LINE_HEIGHTS[this.state.settings.lineHeightIdx])));
-      this.pages=ReaderCore.paginatePlainText({title:chapter.title,paragraphs:ReaderCore.normalizeParagraphs(chapter.paragraphs||ReaderCore.splitParagraphs(chapter.content)),charsPerLine:width,linesPerPage:lines});
+      const paragraphs=ReaderCore.normalizeParagraphs(chapter.paragraphs||ReaderCore.splitParagraphs(chapter.content));
+      const measureLines=()=>Math.max(2,Math.floor((this.readerScroll.clientHeight-verticalReserve)/((this.state.settings.fontSize||18)*LINE_HEIGHTS[this.state.settings.lineHeightIdx])));
+      let lines=measureLines();
+      const paginate=()=>ReaderCore.paginatePlainText({title:chapter.title,paragraphs,charsPerLine:width,linesPerPage:lines});
+      this.pages=paginate();
+      const renderDom=()=>{
+        this.readerContent.innerHTML=this.pages.map((page,pageIndex)=>`<section class="page" data-page="${pageIndex}"><div class="page-inner">${page.blocks.map(block=>block.type==='title'?'<h1>'+this.escape(block.text)+'</h1>':'<p data-p="'+block.paragraphIndex+'" data-start="'+block.start+'">'+this.escape(block.text)+'</p>').join('')}</div></section>`).join('');
+        this.setPageAriaState();
+      };
+      renderDom();
+      for(let attempt=0;attempt<3&&lines>2;attempt++){
+        let overflow=false;
+        for(const pageEl of this.readerContent.children){
+          if(pageEl.scrollHeight>pageEl.clientHeight+1){overflow=true;break;}
+        }
+        if(!overflow)break;
+        lines=Math.max(2,Math.floor(lines*.85));
+        this.pages=paginate();
+        renderDom();
+      }
       if(savedPosition)this.currentPage=this.pageIndexForPosition(savedPosition);
       else this.currentPage=Math.min(this.currentPage||0,this.pages.length-1);
-      this.readerContent.innerHTML=this.pages.map((page,pageIndex)=>`<section class="page" data-page="${pageIndex}"><div class="page-inner">${page.blocks.map(block=>block.type==='title'?`<h1>${this.escape(block.text)}</h1>`:`<p data-p="${block.paragraphIndex}" data-start="${block.start}">${this.escape(block.text)}</p>`).join('')}</div></section>`).join('');
       this.readerContent.style.setProperty('--page-width',`${pageWidth}px`);
       this.readerContent.style.width=`${this.pages.length*pageWidth}px`;
       this.setPageTransform(false);
+    }
+
+    setPageAriaState(){
+      if(!this.readerContent)return;
+      const pages=this.readerContent.querySelectorAll('.page');
+      pages.forEach((page,index)=>page.setAttribute('aria-hidden',index===this.currentPage?'false':'true'));
     }
 
     getReaderPageWidth(){
@@ -1492,10 +1701,11 @@
         this.setPageTransform(false);
         return;
       }
-      const p=this.readerContent.querySelector(`p[data-ch="${position.chapter||0}"][data-p="${position.paragraphIndex||0}"]`);
-      if(p)this.readerScroll.scrollTop=Math.max(0,p.offsetTop+(position.paragraphOffsetPx||0)-24);
+      const chapter=position.chapter!==undefined?position.chapter:this.currentChapter;
+      const paragraph=this.readerContent.querySelector(`p[data-ch="${chapter}"][data-p="${position.paragraphIndex||0}"]`);
+      if(paragraph)this.readerScroll.scrollTop=Math.max(0,paragraph.offsetTop+(position.paragraphOffsetPx||0)-24);
       else{
-        const heading=this.readerContent.querySelector(`h1[data-ch="${position.chapter||0}"]`);
+        const heading=this.readerContent.querySelector(`h1[data-ch="${chapter}"]`);
         if(heading)this.readerScroll.scrollTop=Math.max(0,heading.offsetTop-24);
         else this.readerScroll.scrollTop=0;
       }
@@ -1544,20 +1754,36 @@
     }
 
     async stepForward(){
-      if(this.state.settings.mode==='scroll'){
-        const book=this.getCurrentBook();
-        if(book&&this.currentChapter<book.chapterCount-1){await this.scrollToChapter(this.currentChapter+1);this.restartAutoScroll();return;}
+      const book=this.getCurrentBook();
+      if(!book)return;
+      if(this.state.settings.mode==='scroll'&&this.currentChapter<book.chapterCount-1){
+        this.enqueueNavigation(()=>this.scrollToChapter(this.currentChapter+1));
+        this.restartAutoScroll();
+        return;
       }
       if(this.state.settings.mode==='page'){
-        if(this.currentPage<this.pages.length-1){this.currentPage++;this.setPageTransform(true);this.scheduleChromeAutoHide();this.flushPosition();this.restartAutoScroll();return;}
+        if(this.currentPage<this.pages.length-1){
+          this.currentPage++;
+          this.setPageTransform(true);
+          this.scheduleChromeAutoHide();
+          this.flushPosition();
+          this.restartAutoScroll();
+          return;
+        }
+        if(this.currentChapter<book.chapterCount-1){
+          this.enqueueNavigation(()=>this.goToChapter(this.currentChapter+1));
+          this.restartAutoScroll();
+        }
       }
-      const book=this.getCurrentBook();
-      if(book&&this.currentChapter<book.chapterCount-1){await this.flushPosition();this.currentChapter++;this.currentPage=0;await this.renderReader();this.restartAutoScroll();}
     }
 
     async stepBack(){
-      if(this.state.settings.mode==='scroll'){
-        if(this.currentChapter>0){await this.scrollToChapter(this.currentChapter-1);this.restartAutoScroll();return;}
+      const book=this.getCurrentBook();
+      if(!book)return;
+      if(this.state.settings.mode==='scroll'&&this.currentChapter>0){
+        this.enqueueNavigation(()=>this.scrollToChapter(this.currentChapter-1));
+        this.restartAutoScroll();
+        return;
       }
       if(this.state.settings.mode==='page'&&this.currentPage>0){
         const target=ReaderCore.getPreviousPageTarget(this.currentChapter,this.currentPage,this.pages.length);
@@ -1569,19 +1795,45 @@
         return;
       }
       if(this.state.settings.mode==='page'&&this.currentChapter>0){
-        const fromChapter=this.currentChapter;
-        await this.flushPosition();
-        this.currentChapter--;
-        this.currentPage=0;
-        await this.renderReader();
-        const target=ReaderCore.getPreviousPageTarget(fromChapter,0,this.pages.length);
-        this.currentPage=target.page;
-        this.setPageTransform(false);
-        this.flushPosition();
+        this.enqueueNavigation(()=>this.goToPreviousChapter());
         this.restartAutoScroll();
         return;
       }
-      if(this.currentChapter>0){await this.flushPosition();this.currentChapter--;this.currentPage=0;await this.renderReader();this.restartAutoScroll();}
+      if(this.currentChapter>0){
+        this.enqueueNavigation(()=>this.goToChapter(this.currentChapter-1));
+        this.restartAutoScroll();
+      }
+    }
+
+    enqueueNavigation(task){
+      this.navChain=this.navChain.then(()=>task()).catch(error=>console.error('navigation task failed',error));
+      return this.navChain;
+    }
+
+    async goToChapter(chapter,position){
+      const book=this.getCurrentBook();
+      if(!book)return;
+      const target=Math.max(0,Math.min(book.chapterCount-1,Math.floor(chapter)||0));
+      if(target===this.currentChapter&&this.reader.classList.contains('active'))return;
+      await this.flushPosition();
+      this.currentChapter=target;
+      this.currentPage=0;
+      await this.renderReader(position);
+      this.updateProgress();
+    }
+
+    async goToPreviousChapter(){
+      const book=this.getCurrentBook();
+      if(!book||this.currentChapter<=0)return;
+      const fromChapter=this.currentChapter;
+      await this.flushPosition();
+      this.currentChapter=fromChapter-1;
+      this.currentPage=0;
+      await this.renderReader();
+      const target=ReaderCore.getPreviousPageTarget(fromChapter,0,this.pages.length);
+      this.currentPage=target.page;
+      this.setPageTransform(false);
+      this.flushPosition();
     }
 
     setPageTransform(animated){
@@ -1593,6 +1845,7 @@
       if(animated&&animation==='fade'){
         this.readerContent.animate([{opacity:.3},{opacity:1}],{duration:180,easing:'ease-out'});
       }
+      this.setPageAriaState();
       this.updateProgress();
     }
 
@@ -1711,6 +1964,14 @@
       this.showToast(this.state.settings.nightMode==='system'?'夜间模式：跟随系统':this.state.settings.nightMode==='timer'?'夜间模式：21:00-7:00':'夜间模式：手动');
     }
 
+    setVolumeKeyTurn(enabled){
+      this.state.settings.volumeKeyTurn=!!enabled;
+      this.saveState();
+      this.updateSettingControls();
+      this.setAndroidVolumeKeys(!!enabled);
+      this.showToast(this.state.settings.volumeKeyTurn?'音量键翻页已开启':'音量键恢复为系统音量');
+    }
+
     setAutoScroll(mode){
       this.state.settings.autoScroll=['off','slow','normal','fast'].includes(mode)?mode:'off';
       this.saveState();
@@ -1772,13 +2033,14 @@
     }
 
     updateSettingControls(){
-      document.querySelectorAll('[data-mode]').forEach(btn=>btn.classList.toggle('active',btn.dataset.mode===this.state.settings.mode));
-      document.querySelectorAll('[data-line]').forEach(btn=>btn.classList.toggle('active',Number(btn.dataset.line)===this.state.settings.lineHeightIdx));
-      document.querySelectorAll('[data-margin]').forEach(btn=>btn.classList.toggle('active',Number(btn.dataset.margin)===this.state.settings.marginIdx));
-      document.querySelectorAll('[data-font]').forEach(btn=>btn.classList.toggle('active',Number(btn.dataset.font)===this.state.settings.fontFamilyIdx));
-      document.querySelectorAll('[data-animation]').forEach(btn=>btn.classList.toggle('active',btn.dataset.animation===this.state.settings.pageAnimation));
-      document.querySelectorAll('[data-night]').forEach(btn=>btn.classList.toggle('active',btn.dataset.night===this.state.settings.nightMode));
-      document.querySelectorAll('[data-autoscroll]').forEach(btn=>btn.classList.toggle('active',btn.dataset.autoscroll===(this.state.settings.autoScroll||'off')));
+      document.querySelectorAll('[data-mode]').forEach(btn=>{const active=btn.dataset.mode===this.state.settings.mode;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active?'true':'false');});
+      document.querySelectorAll('[data-line]').forEach(btn=>{const active=Number(btn.dataset.line)===this.state.settings.lineHeightIdx;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active?'true':'false');});
+      document.querySelectorAll('[data-margin]').forEach(btn=>{const active=Number(btn.dataset.margin)===this.state.settings.marginIdx;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active?'true':'false');});
+      document.querySelectorAll('[data-font]').forEach(btn=>{const active=Number(btn.dataset.font)===this.state.settings.fontFamilyIdx;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active?'true':'false');});
+      document.querySelectorAll('[data-animation]').forEach(btn=>{const active=btn.dataset.animation===this.state.settings.pageAnimation;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active?'true':'false');});
+      document.querySelectorAll('[data-night]').forEach(btn=>{const active=btn.dataset.night===this.state.settings.nightMode;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active?'true':'false');});
+      document.querySelectorAll('[data-autoscroll]').forEach(btn=>{const active=btn.dataset.autoscroll===(this.state.settings.autoScroll||'off');btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active?'true':'false');});
+      document.querySelectorAll('[data-volume]').forEach(btn=>{const active=btn.dataset.volume==='on'===!!this.state.settings.volumeKeyTurn;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active?'true':'false');});
       this.$('font-size-label').textContent=this.state.settings.fontSize;
     }
 
@@ -1878,6 +2140,7 @@
       this.searchRunId++;
       this.searchPanel.classList.remove('open');
       this.bookmarksPanel.classList.remove('open');
+      if(this.trashPanel)this.trashPanel.classList.remove('open');
       if(hideScrim)this.scrim.classList.remove('show');
       this.syncVisibilityState();
     }
@@ -1890,7 +2153,7 @@
     }
 
     hasOpenOverlay(){
-      return [this.settingsSheet,this.tocSheet,this.bookActions,this.searchPanel,this.bookmarksPanel,this.libraryMenu].some(panel=>panel&&panel.classList.contains('open'));
+      return [this.settingsSheet,this.tocSheet,this.bookActions,this.searchPanel,this.bookmarksPanel,this.libraryMenu,this.trashPanel].some(panel=>panel&&panel.classList.contains('open'));
     }
 
     toggleChrome(){
@@ -1937,7 +2200,8 @@
       const libraryMenuOpen=this.libraryMenu&&this.libraryMenu.classList.contains('open');
       const searchOpen=this.searchPanel&&this.searchPanel.classList.contains('open');
       const bookmarksOpen=this.bookmarksPanel&&this.bookmarksPanel.classList.contains('open');
-      const libraryBlocked=readerActive||searchOpen||bookmarksOpen||bookActionsOpen||libraryMenuOpen;
+      const trashOpen=this.trashPanel&&this.trashPanel.classList.contains('open');
+      const libraryBlocked=readerActive||searchOpen||bookmarksOpen||bookActionsOpen||libraryMenuOpen||trashOpen;
       if(this.library){
         this.library.setAttribute('aria-hidden',readerActive?'true':'false');
         this.library.inert=!!libraryBlocked;
@@ -1970,6 +2234,10 @@
         this.bookmarksPanel.setAttribute('aria-hidden',bookmarksOpen?'false':'true');
         this.bookmarksPanel.inert=!bookmarksOpen;
       }
+      if(this.trashPanel){
+        this.trashPanel.setAttribute('aria-hidden',trashOpen?'false':'true');
+        this.trashPanel.inert=!trashOpen;
+      }
     }
 
     rerenderPreservingPosition(){
@@ -1998,6 +2266,23 @@
       this.toastEl.classList.add('show');
       clearTimeout(this.toastTimer);
       this.toastTimer=setTimeout(()=>this.toastEl.classList.remove('show'),1800);
+    }
+
+    showToastAction(message,actionLabel,onAction){
+      this.toastEl.textContent=message;
+      this.toastEl.classList.add('show','toast-action');
+      const action=document.createElement('button');
+      action.type='button';
+      action.className='toast-action-btn';
+      action.textContent=actionLabel;
+      action.addEventListener('click',()=>{
+        this.toastEl.classList.remove('show','toast-action');
+        clearTimeout(this.toastTimer);
+        try{onAction();}catch(error){console.error('toast action failed',error);}
+      });
+      this.toastEl.appendChild(action);
+      clearTimeout(this.toastTimer);
+      this.toastTimer=setTimeout(()=>this.toastEl.classList.remove('show','toast-action'),8000);
     }
 
     escape(value){

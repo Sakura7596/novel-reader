@@ -73,9 +73,40 @@ function injectHarness(html) {
     app.requestDeleteBook();
     const deleteBtn = document.querySelector('#delete-book-btn');
     if (!deleteBtn.classList.contains('danger-armed')) fail('delete button should arm before confirming');
+    const otherBook = app.createBook('另一本书', '测试', [{ title: '第一章', content: '内容', paragraphs: ['内容'] }], 'linear-gradient(145deg,#315d72,#74a0af)');
+    app.state.books.push(otherBook);
+    app.showBookActions(otherBook.id);
+    if (app.armedBookId !== null && app.armedBookId !== undefined) fail('switching books should clear the armed delete state');
+    try {
+      await app.saveTrashEntry('selfcheck-id', { savedAt: Date.now(), book: { id: 'selfcheck-id', title: '自检' }, chapters: [], position: null, bookmarks: [] });
+      const selfCheck = await app.loadTrashEntry('selfcheck-id');
+      await app.deleteTrashEntry('selfcheck-id');
+      if (!selfCheck || selfCheck.book.id !== 'selfcheck-id') fail('trash write/read self-check failed: ' + JSON.stringify(selfCheck));
+    } catch (selfError) {
+      fail('trash self-check threw: ' + (selfError && selfError.message || selfError));
+    }
     app.requestDeleteBook();
-    await wait(300);
-    if (app.state.books.length !== 0) fail('second tap on an armed delete should remove the book');
+    if (app.state.books.some(b => b.id === book.id) === false) fail('cross-book arm must not delete book A');
+    if (app.state.books.some(b => b.id === otherBook.id) === false) fail('first tap on book B must not delete it');
+    app.requestDeleteBook();
+    await wait(400);
+    if (app.state.books.some(b => b.id === otherBook.id)) fail('second tap on an armed delete should remove only its own book');
+    if (app.state.books.some(b => b.id === book.id) === false) fail('book A must remain intact after deleting B');
+    app.closeSheets();
+
+    await app.refreshTrash();
+    const trashEntry = await app.loadTrashEntry(otherBook.id);
+    const allTrash = await app.listTrashEntries();
+    const restored = await app.restoreFromTrash(otherBook.id);
+    if (!restored) fail('book should be restorable from the trash; entry=' + JSON.stringify(trashEntry && { hasBook: !!trashEntry.book, chapters: (trashEntry.chapters || []).length, savedAt: trashEntry.savedAt }) + ' all=' + JSON.stringify(allTrash.map(t => t.bookId)));
+    if (!app.state.books.some(b => b.id === otherBook.id)) fail('restored book should be back on the shelf');
+    if (app.trashEntries.some(entry => entry.bookId === otherBook.id)) fail('restored book should leave the trash');
+
+    app.showBookActions(book.id);
+    app.requestDeleteBook();
+    app.requestDeleteBook();
+    await wait(400);
+    if (app.state.books.length !== 1) fail('second tap on an armed delete should remove the book');
     app.closeSheets();
 
     const restoredBook = app.createBook('恢复书', '测试作者', [chapterA], 'linear-gradient(145deg,#315d72,#74a0af)');
@@ -92,11 +123,12 @@ function injectHarness(html) {
       }
     });
     await app.importBackup(new File([backup], 'backup.json', { type: 'application/json' }));
-    if (app.state.books.length !== 1) fail('backup import should restore the book: ' + app.state.books.length);
-    if (app.state.books[0].title !== '恢复书') fail('backup import restored the wrong book');
+    if (!app.state.books.some(b => b.title === '恢复书')) fail('backup import should restore the book: ' + app.state.books.length);
+    const restoredFromBackup = app.state.books.find(b => b.title === '恢复书');
+    if (!restoredFromBackup) fail('backup import restored the wrong book');
     if (app.state.bookmarks.length !== 1 || app.state.bookmarks[0].id !== 'bm-restored') fail('backup import should restore bookmarks');
-    await app.loadChapter(app.state.books[0], 0);
-    if (app.chapterCache.has(app.state.books[0].id + ':0') === false) fail('backup import should make chapter content loadable');
+    await app.loadChapter(restoredFromBackup, 0);
+    if (app.chapterCache.has(restoredFromBackup.id + ':0') === false) fail('backup import should make chapter content loadable');
 
     let downloadName = '';
     const originalCreate = document.createElement.bind(document);
@@ -108,10 +140,11 @@ function injectHarness(html) {
       }
       return el;
     };
+    const booksBeforeExport = app.state.books.length;
     await app.exportData();
     document.createElement = originalCreate;
     if (!downloadName.startsWith('novel-reader-backup-')) fail('export should produce a named backup download: ' + downloadName);
-    if (app.state.books.length !== 1) fail('export should not mutate the library');
+    if (app.state.books.length !== booksBeforeExport) fail('export should not mutate the library');
 
     document.documentElement.setAttribute('data-feature-smoke', 'pass');
   } catch (err) {

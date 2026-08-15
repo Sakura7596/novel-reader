@@ -91,6 +91,31 @@ function injectHarness(html) {
     await wait(300);
     if (app.state.settings.fontSize !== beforeFont + 1) fail('pinch out should increase the font size: ' + app.state.settings.fontSize);
 
+    app.setMode('page');
+    await wait(250);
+    const chapterCount = app.getCurrentBook().chapterCount;
+    for (let i = 0; i < 12; i++) {
+      app.stepForward();
+    }
+    await wait(500);
+    if (app.currentChapter !== chapterCount - 1) fail('rapid next presses must clamp at the last chapter: ' + app.currentChapter);
+    for (let i = 0; i < 12; i++) {
+      app.stepBack();
+    }
+    await wait(500);
+    if (app.currentChapter < 0 || app.currentPage < 0) fail('rapid back presses must not go below the first page: ' + app.currentChapter + '/' + app.currentPage);
+    if (app.currentPage > 0 && app.currentChapter >= 0) {
+      if (app.readerContent.querySelectorAll('.page').length === 0) fail('page DOM should exist after rapid navigation');
+    }
+    app.setMode('scroll');
+    await wait(250);
+    const scrollBook = app.getCurrentBook();
+    for (let i = 0; i < 10; i++) {
+      app.stepForward();
+    }
+    await wait(600);
+    if (app.currentChapter > scrollBook.chapterCount - 1) fail('rapid scroll-mode next must not exceed the last chapter: ' + app.currentChapter);
+
     app.setAutoScroll('fast');
     if (!app.autoScrollTimer) fail('fast auto-scroll should start a timer');
     app.setAutoScroll('off');

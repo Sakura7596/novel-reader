@@ -151,8 +151,9 @@ body.theme-night .brightness-field{background:rgba(255,255,255,.06)}
 .selection-bubble.show{opacity:1;transform:translateY(0);pointer-events:auto}
 .selection-bubble button{min-width:58px;min-height:38px;border:0;background:transparent;color:#fff;border-radius:7px;font-weight:700}
 .selection-bubble button+button{border-left:1px solid rgba(255,255,255,.16)}
-body.theme-night .icon-button,
-body.theme-night .reader-control{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12);color:#e6ddd2}
+body.theme-night .reader-view .reader-control,
+body.theme-night .bottom-sheet .icon-button,
+body.theme-night .side-sheet .icon-button{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.12);color:#e6ddd2}
 body.theme-night .bottom-sheet,
 body.theme-night .side-sheet{background:#20201e;color:#e6ddd2}
 body.theme-night .settings-card{background:#262522;border-color:rgba(255,255,255,.08)}
@@ -236,6 +237,12 @@ body.theme-night .danger-action svg{background:rgba(255,154,145,.12)}
 .ghost-button svg{width:18px;height:18px}
 .bookmark-actions .danger-text{color:#c43c32}
 .action-sheet{z-index:60}
+.trash-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:8px}
+.trash-row{display:flex;align-items:center;gap:10px}
+.trash-cover{width:30px;height:40px;border-radius:3px;flex:none;box-shadow:0 4px 8px rgba(37,24,13,.13)}
+.trash-copy{min-width:0;flex:1}
+.trash-copy strong{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trash-copy small{color:var(--muted);font-size:11px}
 .action-list{overflow:hidden;border:1px solid rgba(84,68,48,.1);border-radius:12px;background:rgba(255,255,255,.48)}
 .action-row{width:100%;min-height:58px;border:0;border-bottom:1px solid rgba(84,68,48,.09);background:transparent;color:var(--text);display:grid;grid-template-columns:38px minmax(0,1fr);align-items:center;gap:10px;padding:8px 10px;text-align:left}
 .action-row:last-child{border-bottom:0}
@@ -248,8 +255,11 @@ body.theme-night .danger-action svg{background:rgba(255,154,145,.12)}
 .danger-action svg{background:rgba(196,60,50,.09)}
 .scrim{position:absolute;inset:0;z-index:40;background:rgba(30,24,18,.42);opacity:0;pointer-events:none;transition:opacity .2s ease}
 .scrim.show{opacity:1;pointer-events:auto}
-.toast{position:absolute;left:50%;bottom:calc(var(--safe-bottom) + 28px);z-index:80;transform:translate(-50%,20px);opacity:0;background:rgba(32,27,22,.92);color:#fff;border-radius:999px;padding:10px 16px;font-size:14px;transition:opacity .2s ease,transform .2s ease;pointer-events:none}
+.toast{position:absolute;left:50%;bottom:calc(var(--safe-bottom) + 28px);z-index:80;transform:translate(-50%,20px);opacity:0;background:rgba(32,27,22,.92);color:#fff;border-radius:999px;padding:10px 16px;font-size:14px;transition:opacity .2s ease,transform .2s ease;pointer-events:none;display:flex;align-items:center;gap:10px;max-width:88vw}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+.toast-action{pointer-events:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.toast-action-btn{border:0;background:transparent;color:#ffd23e;font-weight:800;font-size:14px;padding:6px 4px;flex:none}
+.toast-action-btn:active{opacity:.7}
 @media (max-width:520px){
   .library-header h1{font-size:25px}
   .primary-button{padding:0 13px}

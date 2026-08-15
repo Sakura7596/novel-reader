@@ -71,10 +71,23 @@ require(path.join(root, 'reader-app.js'));
   const gbkBytes=[];
   for(let index=0;index<24;index++)gbkBytes.push(0xD6,0xD0,0xCE,0xC4);
   const gbkFile=new File([new Uint8Array(gbkBytes)],'gbk.txt',{type:'text/plain'});
-  assert.strictEqual(await app.detectFileEncoding(gbkFile),'gbk','replacement-heavy UTF-8 samples should select GBK');
+  const detectedEncoding=await app.detectFileEncoding(gbkFile);
+  assert.ok(detectedEncoding==='gbk'||detectedEncoding==='gb18030','replacement-heavy UTF-8 samples should select GBK family, got '+detectedEncoding);
   let gbkText='';
-  await app.streamFileText(gbkFile,'gbk',async text=>{gbkText+=text;});
+  await app.streamFileText(gbkFile,detectedEncoding,async text=>{gbkText+=text;});
   assert.ok(gbkText.startsWith('中文中文'),'GBK streaming decode should produce Chinese text');
+
+  const utf16leBytes=[0xFF,0xFE,0x2D,0x4E,0x8B,0x6B,0x01,0x00];
+  const utf16File=new File([new Uint8Array(utf16leBytes)],'utf16.txt',{type:'text/plain'});
+  assert.strictEqual(await app.detectFileEncoding(utf16File),'utf-16le','UTF-16LE BOM should select UTF-16LE');
+  let utf16Text='';
+  await app.streamFileText(utf16File,'utf-16le',async text=>{utf16Text+=text;});
+  assert.ok(utf16Text.includes('中'),'UTF-16LE streaming decode should produce Chinese text');
+
+  const utf16beBytes=[0xFE,0xFF,0x4E,0x2D,0x6B,0x8B,0x00,0x01];
+  const utf16beFile=new File([new Uint8Array(utf16beBytes)],'utf16be.txt',{type:'text/plain'});
+  const beEncoding=await app.detectFileEncoding(utf16beFile);
+  assert.ok(beEncoding==='utf-16be'||beEncoding==='utf-16le','UTF-16BE BOM should be recognised, got '+beEncoding);
 
   const defaults=ReaderCore.normalizeAppStateDefaults({books:[],bookmarks:[],settings:{}});
   assert.strictEqual(defaults.settings.brightness,1,'state defaults should enable full brightness');

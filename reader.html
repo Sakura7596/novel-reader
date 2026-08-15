@@ -91,7 +91,7 @@
       </div>
     </main>
 
-    <aside id="settings-sheet" class="bottom-sheet" aria-label="阅读设置">
+    <aside id="settings-sheet" class="bottom-sheet" role="dialog" aria-modal="true" aria-label="阅读设置">
       <div class="sheet-grabber"></div>
       <header class="sheet-header">
         <h2>阅读设置</h2>
@@ -126,6 +126,13 @@
               <button type="button" data-autoscroll="slow">慢</button>
               <button type="button" data-autoscroll="normal">中</button>
               <button type="button" data-autoscroll="fast">快</button>
+            </div>
+          </div>
+          <div class="setting-group">
+            <span>音量键</span>
+            <div class="segmented" data-setting="volume">
+              <button type="button" data-volume="on">翻页</button>
+              <button type="button" data-volume="off">调音量</button>
             </div>
           </div>
         </section>
@@ -192,7 +199,7 @@
       </div>
     </aside>
 
-    <aside id="toc-sheet" class="side-sheet" aria-label="目录">
+    <aside id="toc-sheet" class="side-sheet" role="dialog" aria-modal="true" aria-label="目录">
       <header class="sheet-header">
         <h2>目录</h2>
         <button id="toc-close" class="icon-button" type="button" aria-label="关闭目录">
@@ -206,7 +213,7 @@
       <div id="toc-list" class="toc-list"></div>
     </aside>
 
-    <section id="search-panel" class="feature-panel" aria-label="全文搜索" aria-hidden="true">
+    <section id="search-panel" class="feature-panel" role="dialog" aria-modal="true" aria-label="全文搜索" aria-hidden="true">
       <header class="feature-panel-header">
         <div>
           <p class="eyebrow">书库工具</p>
@@ -229,7 +236,7 @@
       <div id="search-results" class="feature-list"></div>
     </section>
 
-    <section id="bookmarks-panel" class="feature-panel" aria-label="书签与笔记" aria-hidden="true">
+    <section id="bookmarks-panel" class="feature-panel" role="dialog" aria-modal="true" aria-label="书签与笔记" aria-hidden="true">
       <header class="feature-panel-header">
         <div>
           <p class="eyebrow">阅读收藏</p>
@@ -243,7 +250,7 @@
       <div id="bookmarks-list" class="feature-list"></div>
     </section>
 
-    <aside id="book-actions" class="bottom-sheet action-sheet" aria-label="书籍操作" aria-hidden="true">
+    <aside id="book-actions" class="bottom-sheet action-sheet" role="dialog" aria-modal="true" aria-label="书籍操作" aria-hidden="true">
       <div class="sheet-grabber"></div>
       <header class="sheet-header">
         <div>
@@ -272,7 +279,7 @@
       </div>
     </aside>
 
-    <aside id="library-menu" class="bottom-sheet action-sheet" aria-label="书架工具" aria-hidden="true">
+    <aside id="library-menu" class="bottom-sheet action-sheet" role="dialog" aria-modal="true" aria-label="书架工具" aria-hidden="true">
       <div class="sheet-grabber"></div>
       <header class="sheet-header">
         <div>
@@ -305,8 +312,29 @@
             <span class="action-meta">从备份文件恢复或合并书架</span>
           </span>
         </button>
+        <button id="trash-btn" class="action-row" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7h12M10 11v6M14 11v6M9 7l1-2h4l1 2M8 7l1 13h6l1-13"/></svg>
+          <span class="action-copy">
+            <strong>最近删除</strong>
+            <span id="trash-count" class="action-meta">空</span>
+          </span>
+        </button>
       </div>
     </aside>
+
+    <section id="trash-panel" class="feature-panel" role="dialog" aria-modal="true" aria-label="最近删除" aria-hidden="true">
+      <header class="feature-panel-header">
+        <div>
+          <p class="eyebrow">可恢复</p>
+          <h2>最近删除</h2>
+        </div>
+        <button id="trash-close" class="icon-button" type="button" aria-label="关闭最近删除">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <p id="trash-status" class="panel-status"></p>
+      <div id="trash-list" class="feature-list"></div>
+    </section>
 
     <div id="scrim" class="scrim"></div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
