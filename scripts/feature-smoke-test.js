@@ -74,6 +74,8 @@ function injectHarness(html) {
     const deleteBtn = document.querySelector('#delete-book-btn');
     if (!deleteBtn.classList.contains('danger-armed')) fail('delete button should arm before confirming');
     const otherBook = app.createBook('另一本书', '测试', [{ title: '第一章', content: '内容', paragraphs: ['内容'] }], 'linear-gradient(145deg,#315d72,#74a0af)');
+    await app.saveChapters(otherBook.id, [{ title: '第一章', content: '内容' }]);
+    delete otherBook.chapters;
     app.state.books.push(otherBook);
     app.showBookActions(otherBook.id);
     if (app.armedBookId !== null && app.armedBookId !== undefined) fail('switching books should clear the armed delete state');
@@ -143,7 +145,15 @@ function injectHarness(html) {
     const booksBeforeExport = app.state.books.length;
     await app.exportData();
     document.createElement = originalCreate;
-    if (!downloadName.startsWith('novel-reader-backup-')) fail('export should produce a named backup download: ' + downloadName);
+    if (!downloadName.startsWith('novel-reader-backup-')) {
+      const precheck = [];
+      for (const b of app.state.books) {
+        for (let i = 0; i < b.chapterCount; i++) {
+          try { await app.loadChapter(b, i); } catch (e) { precheck.push(b.title + ' ch' + i + ': ' + String(e && e.message || e)); }
+        }
+      }
+      fail('export should produce a named backup download: ' + downloadName + ' precheck=' + JSON.stringify(precheck));
+    }
     if (app.state.books.length !== booksBeforeExport) fail('export should not mutate the library');
 
     document.documentElement.setAttribute('data-feature-smoke', 'pass');

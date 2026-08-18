@@ -99,6 +99,8 @@ assert.strictEqual(normalizedPreferences.settings.fontFamilyIdx, 0, 'state migra
 const app = fs.readFileSync(appPath, 'utf8');
 assert.ok(app.includes('class NovelReaderApp'), 'reader-app.js should define the rebuilt app controller');
 assert.ok(app.includes('restorePosition'), 'reader-app.js should restore saved reading positions');
+assert.ok(app.includes('const committed=await this.openReader'), 'search/bookmark jumps must gate on the committed openReader result');
+assert.ok(app.includes('beginRenderIntent'), 'reader-app.js should route every visual request through a render intent');
 assert.ok(app.includes('capturePosition'), 'reader-app.js should capture reading positions');
 assert.ok(app.includes('requestAnimationFrame'), 'reader-app.js should schedule layout-sensitive work');
 assert.ok(app.includes('migrateLegacyInlineChapters'), 'reader-app.js should migrate legacy inline chapters out of app state');
@@ -112,7 +114,8 @@ assert.ok(!app.includes('if(!book.chapters)book.chapters=[]'), 'loadChapter shou
   assert.ok(app.includes(`${name}(`), `reader-app.js should implement streaming import helper ${name}()`);
 });
 assert.ok(app.includes('file.stream()'), 'TXT import should consume File.stream when available');
-assert.ok(app.includes('ReaderCore.createChapterParser()'), 'TXT import should parse decoded chunks incrementally');
+assert.ok(app.includes('ReaderCore.createChapterParser('), 'TXT import should parse decoded chunks incrementally');
+assert.ok(app.includes('detectChapterMode'), 'TXT import should decide numeric chapter mode from the decoded sample');
 assert.ok(app.includes('scannedChapters'), 'full-text search should track scanned chapter progress');
 assert.ok(app.includes('renderContinuousScrollContent('), 'scroll mode should render a continuous multi-chapter document');
 assert.ok(app.includes("event.key==='a'"), 'keyboard navigation should restore A key page-back behavior');

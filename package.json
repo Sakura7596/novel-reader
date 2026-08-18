@@ -3,7 +3,7 @@
     "test": "npm run test:quick && npm run test:e2e && npm run test:features",
     "test:quick": "node scripts/reader-app-unit-tests.js && node scripts/rebuild-regression-tests.js",
     "test:e2e": "node scripts/rebuilt-reader-e2e-test.js",
-    "test:features": "node scripts/feature-smoke-test.js && node scripts/mobile-gesture-test.js",
+    "test:features": "node scripts/feature-smoke-test.js && node scripts/mobile-gesture-test.js && node scripts/mobile-ux-test.js && node scripts/p0-regression-test.js && node scripts/reading-layout-test.js && node scripts/data-integrity-test.js",
     "sync:www": "node scripts/sync-www.js"
   },
   "dependencies": {

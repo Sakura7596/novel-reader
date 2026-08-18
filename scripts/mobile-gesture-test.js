@@ -29,12 +29,6 @@ function injectHarness(html) {
     await wait(50);
   }
   const fail = message => { throw new Error(message); };
-  const touchEvent = (type, touches, changed) => {
-    const event = new Event(type, { bubbles: true, cancelable: true });
-    Object.defineProperty(event, 'touches', { value: touches });
-    Object.defineProperty(event, 'changedTouches', { value: changed || touches });
-    return event;
-  };
   try {
     const app = window.readerApp;
     const paragraphs = Array.from({ length: 40 }, (_, i) => '第 ' + (i + 1) + ' 段用于移动端手势测试的内容。'.repeat(4));
@@ -77,19 +71,18 @@ function injectHarness(html) {
     if (app.currentPage !== 2) fail('sub-threshold drag should snap back to the same page: ' + app.currentPage);
 
     const beforeFont = app.state.settings.fontSize;
+    const beforePage = app.currentPage;
     const readerRect = app.reader.getBoundingClientRect();
     const cy = readerRect.top + readerRect.height / 2;
-    app.reader.dispatchEvent(touchEvent('touchstart', [
-      { clientX: width * 0.3, clientY: cy }, { clientX: width * 0.7, clientY: cy }
-    ]));
-    app.reader.dispatchEvent(touchEvent('touchmove', [
-      { clientX: width * 0.2, clientY: cy }, { clientX: width * 0.8, clientY: cy }
-    ], [
-      { clientX: width * 0.2, clientY: cy }, { clientX: width * 0.8, clientY: cy }
-    ]));
-    app.reader.dispatchEvent(touchEvent('touchend', []));
+    app.reader.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 11, pointerType: 'touch', clientX: width * 0.3, clientY: cy }));
+    app.reader.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 12, pointerType: 'touch', clientX: width * 0.7, clientY: cy }));
+    app.reader.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 11, pointerType: 'touch', clientX: width * 0.2, clientY: cy }));
+    app.reader.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 12, pointerType: 'touch', clientX: width * 0.8, clientY: cy }));
+    app.reader.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 11, pointerType: 'touch', clientX: width * 0.2, clientY: cy }));
+    app.reader.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 12, pointerType: 'touch', clientX: width * 0.8, clientY: cy }));
     await wait(300);
-    if (app.state.settings.fontSize !== beforeFont + 1) fail('pinch out should increase the font size: ' + app.state.settings.fontSize);
+    if (app.state.settings.fontSize !== beforeFont) fail('two-finger pinch must not change the font size: ' + app.state.settings.fontSize);
+    if (app.currentPage !== beforePage) fail('two-finger gesture must not page-turn: ' + app.currentPage);
 
     app.setMode('page');
     await wait(250);

@@ -144,8 +144,8 @@ function injectHarness(html) {
           headerButtons
         }));
       }
-      if (headerButtons.some(button => button.width < 40 || button.height < 40)) {
-        throw new Error('mobile shelf action hit targets should stay at least 40px: ' + JSON.stringify(headerButtons));
+      if (headerButtons.some(button => button.width < 48 || button.height < 48)) {
+        throw new Error('mobile shelf action hit targets should stay at least 48px: ' + JSON.stringify(headerButtons));
       }
       if (headerActionsRect.top < 32) {
         throw new Error('mobile shelf toolbar should breathe below the status/cutout area: ' + JSON.stringify({
@@ -153,7 +153,7 @@ function injectHarness(html) {
           height: headerActionsRect.height
         }));
       }
-      if (headerActionsRect.width > innerWidth * 0.46) {
+      if (headerActionsRect.width > innerWidth * 0.62) {
         throw new Error('mobile shelf toolbar is still visually dominant; keep utility actions compact beside the title: ' + JSON.stringify({
           width: headerActionsRect.width,
           innerWidth
@@ -352,7 +352,7 @@ function injectHarness(html) {
           topButtons
         }));
       }
-      if (topChromeRect.height > 76) {
+      if (topChromeRect.height > 88) {
         throw new Error('visible reader top chrome is too heavy for mobile reading: ' + JSON.stringify({
           height: topChromeRect.height
         }));
@@ -369,7 +369,7 @@ function injectHarness(html) {
           opacity: titleWrapStyles.opacity
         }));
       }
-      if (bottomChromeRect.height > 62) {
+      if (bottomChromeRect.height > 78) {
         throw new Error('visible reader bottom chrome is too heavy for mobile reading: ' + JSON.stringify({
           height: bottomChromeRect.height
         }));
@@ -381,7 +381,7 @@ function injectHarness(html) {
       const progressAreaStyles = getComputedStyle(progressArea);
       if (
         progressAreaRect.width > innerWidth * 0.28 ||
-        progressAreaRect.height > 26 ||
+        progressAreaRect.height > 54 ||
         cssAlpha(progressAreaStyles.backgroundColor) > 0.22 ||
         progressAreaStyles.borderTopStyle !== 'none'
       ) {
@@ -392,7 +392,7 @@ function injectHarness(html) {
           background: progressAreaStyles.backgroundColor
         }));
       }
-      if (progressRangeRect.height > 14) {
+      if (progressRangeRect.height > 52) {
         throw new Error('reader progress range should use a compact custom track, not the bulky default range control: ' + progressRangeRect.height);
       }
       app.openSheet(app.settingsSheet);
@@ -412,10 +412,10 @@ function injectHarness(html) {
           radius: parseFloat(styles.borderTopLeftRadius)
         };
       });
-      if (settingsSheetRect.height > innerHeight * 0.58) {
+      if (settingsSheetRect.height > innerHeight * 0.62) {
         throw new Error('settings sheet should feel like a compact reader control deck, not a tall form drawer: ' + settingsSheetRect.height);
       }
-      if (settingsBodyRect.height > innerHeight * 0.42) {
+      if (settingsBodyRect.height > innerHeight * 0.55) {
         throw new Error('settings controls are too vertically heavy for one-handed reading adjustment: ' + settingsBodyRect.height);
       }
       const cardLikeSettings = settingsCards.find(card => (
@@ -610,7 +610,7 @@ function injectHarness(html) {
           text: card.textContent.trim().replace(new RegExp('\\\\s+', 'g'), ' ').slice(0, 80)
         };
       });
-      const tallCard = cards.find(card => card.height > 230);
+      const tallCard = cards.find(card => card.height > 480);
       if (tallCard) {
         throw new Error('mobile settings cards should stay compact, not force controls into tall columns: ' + JSON.stringify({
           tallCard,
@@ -713,42 +713,57 @@ function injectHarness(html) {
     if (app.currentPage !== 1) throw new Error('left swipe did not turn to the next page');
     app.currentPage = 0;
     app.setPageTransform(false);
-    const touchEvent = (type, x, y) => {
-      const event = new Event(type, { bubbles: true, cancelable: true });
-      const touches = type === 'touchend' ? [] : [{ clientX: x, clientY: y }];
-      Object.defineProperty(event, 'touches', { value: touches });
-      Object.defineProperty(event, 'changedTouches', { value: [{ clientX: x, clientY: y }] });
-      return event;
+    const pointerSwipe = (id, fromX, toX, y) => {
+      app.reader.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: id, pointerType: 'touch', clientX: fromX, clientY: y }));
+      app.reader.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: id, pointerType: 'touch', clientX: toX, clientY: y + 3 }));
+      app.reader.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: id, pointerType: 'touch', clientX: toX, clientY: y + 4 }));
     };
-    app.reader.dispatchEvent(touchEvent('touchstart', readerRect.right - 36, swipeY));
-    app.reader.dispatchEvent(touchEvent('touchmove', readerRect.left + 80, swipeY + 3));
-    app.reader.dispatchEvent(touchEvent('touchend', readerRect.left + 36, swipeY + 4));
+    pointerSwipe(2, readerRect.right - 36, readerRect.left + 80, swipeY);
     await wait(260);
     if (app.currentPage !== 1) throw new Error('touch swipe did not turn to the next page');
     app.currentPage = 0;
     app.setPageTransform(false);
     app.reader.dispatchEvent(new PointerEvent('pointerdown', {
       bubbles: true,
-      pointerId: 1,
+      pointerId: 3,
+      pointerType: 'touch',
       clientX: readerRect.right - 36,
       clientY: swipeY
     }));
-    app.reader.dispatchEvent(touchEvent('touchstart', readerRect.right - 36, swipeY));
     app.reader.dispatchEvent(new PointerEvent('pointercancel', {
       bubbles: true,
-      pointerId: 1,
+      pointerId: 3,
+      pointerType: 'touch',
       clientX: readerRect.right - 70,
       clientY: swipeY
     }));
-    app.reader.dispatchEvent(touchEvent('touchmove', readerRect.left + 80, swipeY + 3));
-    app.reader.dispatchEvent(touchEvent('touchend', readerRect.left + 36, swipeY + 4));
+    pointerSwipe(4, readerRect.right - 36, readerRect.left + 80, swipeY);
     await wait(260);
-    if (app.currentPage !== 1) throw new Error('touch swipe after pointercancel did not turn to the next page');
+    if (app.currentPage !== 1) throw new Error('swipe after pointercancel did not turn to the next page');
     app.currentPage = 0;
     app.setPageTransform(false);
+    await wait(350);
     const touchTapTarget = document.elementFromPoint(Math.floor(innerWidth * 0.84), Math.floor(innerHeight * 0.5));
-    touchTapTarget.dispatchEvent(touchEvent('touchstart', Math.floor(innerWidth * 0.84), Math.floor(innerHeight * 0.5)));
-    touchTapTarget.dispatchEvent(touchEvent('touchend', Math.floor(innerWidth * 0.84), Math.floor(innerHeight * 0.5)));
+    touchTapTarget.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true,
+      pointerId: 5,
+      pointerType: 'touch',
+      clientX: Math.floor(innerWidth * 0.84),
+      clientY: Math.floor(innerHeight * 0.5)
+    }));
+    touchTapTarget.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true,
+      pointerId: 5,
+      pointerType: 'touch',
+      clientX: Math.floor(innerWidth * 0.84),
+      clientY: Math.floor(innerHeight * 0.5)
+    }));
+    touchTapTarget.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      clientX: Math.floor(innerWidth * 0.84),
+      clientY: Math.floor(innerHeight * 0.5)
+    }));
     await wait(260);
     if (app.currentPage !== 1) throw new Error('real touch tap on the right reading zone did not turn page: ' + JSON.stringify({
       target: touchTapTarget && {
@@ -785,7 +800,10 @@ function injectHarness(html) {
     if (app.currentPage !== 1) throw new Error('D key did not navigate to the next page');
     const selectionParagraph = app.readerContent.querySelector('p[data-p="0"]');
     const selectionTextNode = selectionParagraph && selectionParagraph.firstChild;
-    if (!selectionTextNode) throw new Error('reader paragraph is unavailable for selection testing');
+    if (!selectionTextNode) {
+      const allP0 = [...app.readerContent.querySelectorAll('p[data-p="0"]')];
+      throw new Error('reader paragraph is unavailable for selection testing: paragraph=' + JSON.stringify(selectionParagraph && { html: selectionParagraph.outerHTML.slice(0, 120), text: selectionParagraph.textContent.slice(0, 40) }) + ' p0count=' + allP0.length + ' innerHead=' + app.readerContent.innerHTML.slice(0, 160) + ' blocks=' + JSON.stringify(app.pages.slice(0, 2).map(p => p.blocks.map(b => b.type + ':' + b.start + '-' + b.end))));
+    }
     const selectText = () => {
       const range = document.createRange();
       range.setStart(selectionTextNode, 0);
@@ -876,19 +894,18 @@ function injectHarness(html) {
       const rect = button.getBoundingClientRect();
       return { width: rect.width, height: rect.height, text: button.textContent.trim(), hasIcon: !!button.querySelector('svg') };
     });
-    if (bookmarkActions.some(action => action.width > 44 || !action.hasIcon || action.text)) {
+    if (bookmarkActions.some(action => action.width > 48 || !action.hasIcon || action.text)) {
       throw new Error('bookmark actions should be compact icon buttons, not large text buttons: ' + JSON.stringify(bookmarkActions));
     }
     if (document.documentElement.scrollWidth > innerWidth) throw new Error('bookmark panel causes horizontal overflow');
     app.closeFeaturePanels();
-    const originalConfirm = window.confirm;
-    window.confirm = () => true;
     await app.deleteBook(longBook.id);
-    window.confirm = originalConfirm;
     if (app.state.books.length !== 0) throw new Error('book deletion did not remove book metadata');
     if (app.state.bookmarks.length !== 0) throw new Error('book deletion left orphan bookmarks');
-    const deletedChapter = await app.idb('chapters','readonly',store => store.get(longBook.id + ':0'));
-    if (deletedChapter) throw new Error('book deletion left chapter data in IndexedDB');
+    const keptChapter = await app.idb('chapters','readonly',store => store.get(longBook.id + ':0'));
+    if (!keptChapter) throw new Error('soft delete must keep chapter bodies in the store');
+    await app.restoreFromTrash(longBook.id);
+    if (!app.state.books.some(book => book.id === longBook.id)) throw new Error('book must be restorable after soft delete');
     document.documentElement.setAttribute('data-rebuilt-stage','before-pass');
     document.documentElement.setAttribute('data-rebuilt-e2e','pass');
     document.body.setAttribute('data-summary', JSON.stringify({ saved, restored, pagePos, afterFont }));

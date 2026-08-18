@@ -20,19 +20,35 @@
       .split(/\n+/));
   }
 
-  const CHAPTER_HEADER_PATTERN=/^\s*(第[一二三四五六七八九十百千万零〇\d]+[章节回卷部集].{0,40}|[楔序]子|序章|终章|尾声|后记)\s*$/;
+  const CN_DIGITS='零〇一二三四五六七八九十百千万两亿壹贰叁肆伍陆柒捌玖拾佰仟';
+  const VOLUME_HEADER_PATTERN=new RegExp(`^\\s*第\\s*[${CN_DIGITS}\\d]+\\s*[卷部篇](?!的)[^\\n]{0,40}\\s*$`);
+  const SPECIAL_HEADER=`(?:序\\s*章|终\\s*章|尾\\s*声|后\\s*记|序言|前言|楔子)(?:\\s+\\S[^\\n]{0,39})?`;
+  const CHAPTER_HEADER_PATTERN=new RegExp(`^\\s*(?:第\\s*[${CN_DIGITS}\\d]+\\s*[章节回幕](?!的|正文|内容)[^\\n]{0,40}|番外(?:\\s+\\S[^\\n]{0,40})?|${SPECIAL_HEADER})\\s*$`);
+  const NUMERIC_HEADER_PATTERN=/^([1-9]\d{0,4})[、.．]\s*\S{1,40}$/;
+  const CHAPTER_MODE_SAMPLE_BYTES=256*1024;
 
-  function createChapterParser(){
+  function isVolumeHeader(line){
+    return line.length<=48&&VOLUME_HEADER_PATTERN.test(line);
+  }
+
+  function isChapterHeader(line){
+    return line.length<=48&&CHAPTER_HEADER_PATTERN.test(line);
+  }
+
+  function createChapterParser(options){
+    options=options||{};
+    const numericMode=!!options.numericMode;
     let remainder='';
     let title='';
     let body=[];
     let started=false;
     let firstChunk=true;
     let finished=false;
+    let lastNumeric=0;
 
     function emit(nextTitle,output){
       const content=body.join('\n').replace(/\n{3,}/g,'\n\n').trim();
-      if(title||content){
+      if(content){
         output.push({
           title:title||'序',
           content,
@@ -43,14 +59,50 @@
       body=[];
     }
 
+    function matchHeader(line){
+      if(isVolumeHeader(line)){
+        return {kind:'volume',title:line};
+      }
+      if(isChapterHeader(line)){
+        return {kind:'chapter',title:line};
+      }
+      if(numericMode){
+        const match=NUMERIC_HEADER_PATTERN.exec(line);
+        if(match&&line.length<=48){
+          const num=Number(match[1]);
+          if(num>lastNumeric)return {kind:'chapter',title:line,num};
+          return null;
+        }
+      }
+      return null;
+    }
+
     function acceptLine(raw,output){
       const line=raw.trim();
       if(!line||line==='正文'||line==='------------')return;
-      if(CHAPTER_HEADER_PATTERN.test(line)&&line.length<=48){
-        if(started||body.length)emit(line,output);
-        else title=line;
+      const header=matchHeader(line);
+      if(header){
+        if(header.kind==='volume'){
+          lastNumeric=0;
+          if(started||body.length)emit(header.title,output);
+          else title=header.title;
+          started=true;
+          return;
+        }
+        if(header.num!==undefined)lastNumeric=header.num;
+        if(started||body.length){
+          if(title&&!body.length){
+            title=header.title;
+          }else{
+            emit(header.title,output);
+          }
+        }else{
+          title=header.title;
+        }
         started=true;
-      }else body.push(raw);
+        return;
+      }
+      body.push(raw);
     }
 
     return {
@@ -78,8 +130,73 @@
     };
   }
 
-  function parseChaptersFromText(text){
-    const parser=createChapterParser();
+  function detectChapterMode(text){
+    const sample=String(text||'').slice(0,CHAPTER_MODE_SAMPLE_BYTES);
+    const lines=sample.split(/\r?\n/);
+    let standard=0,numeric=0,strictInc=0;
+    let lastNum=0;
+    for(const raw of lines){
+      const line=raw.trim();
+      if(!line)continue;
+      if(isChapterHeader(line)||isVolumeHeader(line)){
+        standard++;
+        continue;
+      }
+      const match=NUMERIC_HEADER_PATTERN.exec(line);
+      if(match&&line.length<=48){
+        const num=Number(match[1]);
+        if(numeric===0){
+          numeric++;
+          lastNum=num;
+          continue;
+        }
+        numeric++;
+        if(num>lastNum)strictInc++;
+        lastNum=num;
+      }
+    }
+    const incRate=numeric>1?strictInc/(numeric-1):0;
+    return numeric>=10&&incRate>=0.9&&numeric>standard*3;
+  }
+
+  function segmentGraphemes(text){
+    const source=String(text||'');
+    if(typeof Intl!=='undefined'&&Intl.Segmenter){
+      try{
+        return [...new Intl.Segmenter('zh',{granularity:'grapheme'}).segment(source)].map(part=>part.segment);
+      }catch(error){}
+    }
+    const result=[];
+    for(let index=0;index<source.length;){
+      const code=source.codePointAt(index);
+      const size=code>0xFFFF?2:1;
+      let end=index+size;
+      while(end<source.length){
+        const cp=source.codePointAt(end);
+        const isZwj=cp===0x200D;
+        const isVariation=cp>=0xFE00&&cp<=0xFE0F;
+        const isModifier=cp>=0x1F3FB&&cp<=0x1F3FF;
+        const isCombining=cp>=0x0300&&cp<=0x036F;
+        if(isZwj||isVariation||isModifier||isCombining){
+          const step=cp>0xFFFF?2:1;
+          end+=step;
+          if(isZwj&&end<source.length){
+            const next=source.codePointAt(end);
+            end+=(next>0xFFFF?2:1);
+          }
+          continue;
+        }
+        break;
+      }
+      result.push(source.slice(index,end));
+      index=end;
+    }
+    return result;
+  }
+
+  function parseChaptersFromText(text,options){
+    const numericMode=options&&options.numericMode!==undefined?!!options.numericMode:detectChapterMode(text);
+    const parser=createChapterParser({numericMode});
     return [...parser.push(text),...parser.finish()];
   }
 
@@ -325,7 +442,9 @@
     findPageIndexForAnchor,
     normalizeBookmarks,
     makeSearchSnippet,
-    isNightTime
+    isNightTime,
+    detectChapterMode,
+    segmentGraphemes
   });
 
   root.ReaderCore=ReaderCore;

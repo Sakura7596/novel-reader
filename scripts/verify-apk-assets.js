@@ -3,50 +3,93 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
-const files = ['reader.html', 'reader-styles.css', 'reader-core.js', 'reader-app.js'];
-const apkArg = process.argv[2] || path.join(root, '小说阅读器.apk');
+const files = [
+  { source: 'reader.html', output: 'index.html' },
+  { source: 'reader-styles.css', output: 'reader-styles.css' },
+  { source: 'reader-core.js', output: 'reader-core.js' },
+  { source: 'reader-app.js', output: 'reader-app.js' }
+];
+const apkArg = path.resolve(process.argv[2] || path.join(root, '小说阅读器.apk'));
 
-function hashFile(file) {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+function hash(content) {
+  return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+function readFile(label, file) {
+  if (!fs.existsSync(file)) {
+    console.error(`MISSING ${label}: ${file}`);
+    return null;
+  }
+  const content = fs.readFileSync(file);
+  if (content.length === 0) {
+    console.error(`EMPTY ${label}: ${file}`);
+    return null;
+  }
+  return content;
 }
 
 let failed = false;
+const expected = new Map();
+
 for (const file of files) {
-  const rootPath = path.join(root, file);
-  const wwwPath = path.join(root, 'www', file);
-  const assetPath = path.join(root, 'android', 'app', 'src', 'main', 'assets', 'public', file);
-  if (!fs.existsSync(rootPath)) {
-    console.error(`MISSING root source: ${file}`);
+  const rootPath = path.join(root, file.source);
+  const wwwPath = path.join(root, 'www', file.output);
+  const assetPath = path.join(root, 'android', 'app', 'src', 'main', 'assets', 'public', file.output);
+  const rootContent = readFile('root source', rootPath);
+  const wwwContent = readFile('www asset', wwwPath);
+  const assetContent = readFile('Android asset', assetPath);
+
+  if (!rootContent || !wwwContent || !assetContent) {
     failed = true;
     continue;
   }
-  const rootHash = hashFile(rootPath);
-  const wwwHash = fs.existsSync(wwwPath) ? hashFile(wwwPath) : null;
-  const assetHash = fs.existsSync(assetPath) ? hashFile(assetPath) : null;
+
+  const rootHash = hash(rootContent);
+  const wwwHash = hash(wwwContent);
+  const assetHash = hash(assetContent);
   const wwwOk = wwwHash === rootHash;
   const assetOk = assetHash === rootHash;
-  console.log(`${file.padEnd(20)} root=${rootHash.slice(0, 12)} www=${wwwHash ? wwwHash.slice(0, 12) : 'N/A'}${wwwOk ? ' OK' : ' MISMATCH'}  android-assets=${assetHash ? assetHash.slice(0, 12) : 'N/A'}${assetOk ? ' OK' : ' MISMATCH'}`);
-  if (!wwwOk) failed = true;
-  if (!assetOk) failed = true;
+  expected.set(file.output, { hash: rootHash });
+  console.log(`${file.source.padEnd(20)} -> ${file.output.padEnd(18)} root=${rootHash.slice(0, 12)} www=${wwwHash.slice(0, 12)}${wwwOk ? ' OK' : ' MISMATCH'}  android-assets=${assetHash.slice(0, 12)}${assetOk ? ' OK' : ' MISMATCH'}`);
+  if (!wwwOk || !assetOk) failed = true;
 }
 
-if (fs.existsSync(apkArg)) {
-  try {
-    const out = execSync(`tar -xOf "${apkArg}" assets/public/reader-app.js`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
-    const apkHash = crypto.createHash('sha256').update(out).digest('hex');
-    const expected = hashFile(path.join(root, 'reader-app.js'));
-    const ok = apkHash === expected;
-    console.log(`reader-app.js in APK:  ${apkHash.slice(0, 12)}${ok ? ' OK' : ' MISMATCH (stale APK!)'}`);
-    if (!ok) failed = true;
-  } catch (error) {
-    console.error(`APK verification failed: ${String(error && error.message || error).slice(0, 300)}`);
-    failed = true;
-  }
+const apkContent = readFile('APK', apkArg);
+if (!apkContent) {
+  failed = true;
 } else {
-  console.log(`APK not found (${apkArg}), skipping in-package check`);
+  for (const file of files) {
+    const entry = `assets/public/${file.output}`;
+    const source = expected.get(file.output);
+    try {
+      const content = execFileSync('tar', ['-xOf', apkArg, entry], {
+        encoding: 'buffer',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 64 * 1024 * 1024
+      });
+      if (content.length === 0) {
+        console.error(`EMPTY APK entry: ${entry}`);
+        failed = true;
+        continue;
+      }
+      if (!source) {
+        console.error(`UNVERIFIED APK entry (root source unavailable): ${entry}`);
+        failed = true;
+        continue;
+      }
+      const apkHash = hash(content);
+      const ok = apkHash === source.hash;
+      console.log(`${entry.padEnd(42)} apk=${apkHash.slice(0, 12)}${ok ? ' OK' : ' MISMATCH (stale APK!)'}`);
+      if (!ok) failed = true;
+    } catch (error) {
+      const detail = String(error && (error.stderr || error.message) || error).trim().slice(0, 300);
+      console.error(`MISSING APK entry: ${entry}${detail ? ` (${detail})` : ''}`);
+      failed = true;
+    }
+  }
 }
 
 if (failed) {
