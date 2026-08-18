@@ -1,0 +1,1 @@
+require('./rebuild-regression-tests');

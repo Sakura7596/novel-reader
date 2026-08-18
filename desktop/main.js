@@ -30,11 +30,14 @@ function createWindow() {
 function importFile(filePath) {
   if (!win || !filePath.toLowerCase().endsWith('.txt')) return;
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size > 100 * 1024 * 1024) {
+      dialog.showErrorBox('导入失败', '请选择 100MB 以内的 TXT 文件');
+      return;
+    }
+    const content = fs.readFileSync(filePath);
     const name = path.basename(filePath);
-    win.webContents.executeJavaScript(`
-      importFile(new File([${JSON.stringify(content)}], ${JSON.stringify(name)}, {type: 'text/plain'}));
-    `).catch(err => console.error('导入失败:', err));
+    win.webContents.send('import-file', { name, content });
   } catch (err) {
     dialog.showErrorBox('导入失败', '无法读取文件:\n' + err.message);
   }
